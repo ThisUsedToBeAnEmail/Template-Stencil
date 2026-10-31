@@ -1,0 +1,137 @@
+Revision history for Template-Stencil
+
+0.14    2026-10-21
+        - files => 0 on new: an engine that reads no file, for templates a
+          visitor writes. A source is never a file's name, and include,
+          content and a wrapper are refused with the tag's line and column.
+        - The POD says include also reads from the working directory, and
+          a new section, UNTRUSTED TEMPLATES, says what that means.
+
+0.13    2026-10-06
+        - NetBSD never compiled: <strings.h> declares popcount64(), so the
+          static helper of that name in src/stencil_escape.c was a static
+          declaration following a non-static one. Renamed
+          stencil_popcount64.
+        - t/11 sized its timing rounds by a fixed iteration count, which on
+          a FreeBSD smoker left the small round below what the clock could
+          resolve and turned the quotient of two rounding errors into a
+          59.3x scaling failure. Both rounds now grow until they span
+          enough ticks to be worth dividing, and skip if the clock cannot
+          get there.
+
+0.12    2026-08-24
+        - Windows. MSVC never linked: the src/ objects were compiled with
+          -o, which cl ignores (it writes x.obj into the top directory), so
+          the link could not find src/x.obj; the rule now says -Fo there.
+          The __builtin_expect probe links as well as compiles (cl only warns
+          about an undeclared function), the gcc -O3/-fomit-frame-pointer
+          probes are skipped on cl (it warns and exits 0 for unknown
+          options), and the SSE2 variant is now selected on MSVC through
+          <intrin.h> cpuid.
+        - The fmt filter printed three-digit exponents (1.5e+003) on the
+          Windows CRT; two digits everywhere now.
+        - The tests write templates in binary mode. Text-mode handles on
+          Windows turned every newline into CRLF, which the engine kept,
+          so t/56 and t/70 compared against LF goldens and failed.
+
+0.11    2026-08-23
+        - Windows. MSVC never linked: the src/ objects were compiled with
+          -o, which cl ignores (it writes x.obj into the top directory), so
+          the link could not find src/x.obj; the rule now says -Fo there.
+          The __builtin_expect probe links as well as compiles (cl only warns
+          about an undeclared function), the gcc -O3/-fomit-frame-pointer
+          probes are skipped on cl (it warns and exits 0 for unknown
+          options), and the SSE2 variant is now selected on MSVC through
+          <intrin.h> cpuid.
+        - The fmt filter printed three-digit exponents (1.5e+003) on the
+          Windows CRT; two digits everywhere now.
+        - The tests write templates in binary mode. Text-mode handles on
+          Windows turned every newline into CRLF, which the engine kept,
+          so t/56 and t/70 compared against LF goldens and failed.
+
+0.10    2026-08-21
+        - Add support for tied hashes in data passed to the template
+
+0.09    2026-08-17
+        - Fix the fmt filter on quadmath and long-double perls. Perl's
+          my_snprintf hands any format that is one bare float spec
+          ("%.2f") to quadmath_snprintf and reads an NV from the
+          varargs, so the double the filter passed made it panic
+          ("quadmath_snprintf failed, format \"%.2f\"") or print 0.00.
+          The float branch now calls snprintf directly, where a double
+          and a plain format mean the same thing on every platform.
+        - t/44-fmt: the %d width case used a 2**53 literal, which a perl
+          without 64-bit integers holds as an NV that no %d can
+          represent (SvIV clamps it to UV_MAX, which reads back as -1).
+          It now formats IV_MAX and compares against perl's own sprintf.
+
+0.08    2026-08-16
+        - Eshu 0.13 is now the test-requires floor, and t/70 skips
+          under anything older (0.11 fixed the indenter but 0.11 and
+          0.12 do not build or walk correctly on Windows; 0.13 is the
+          same indenter, working everywhere). 
+        - -flto is no longer used on Windows.
+
+0.07    2026-08-16
+        - New built-in filter fmt: sprintf with exactly one conversion
+          {% price | fmt('$%.2f') %}
+
+0.06    2026-08-14
+        - The compile-scaling test in t/11-bytecode-shape.t timed
+          _inspect, whose per-op Perl hash building dominated the
+          measurement and made the ratio an allocator benchmark rather
+          than a compiler one; a FreeBSD smoker duly reported 43.9x on a
+          compiler that measures sublinear. It now times
+          _compile_handle/_free_handle and takes the best of five rounds.
+
+0.05    2026-08-12
+        - Require perl 5.10.1.
+        - _abi_ptr returns a UV rather than an IV.
+
+0.04    2026-08-08
+        - cpuid.h is now included only on gcc 4.3+ or clang; FreeBSD 9's
+          base gcc 4.2.1 defines __GNUC__ without shipping the header, so
+          the build died before the SIMD paths could fall back. Runtime
+          caps simply stay scalar on such compilers.
+        - Define MAX when no header supplied it. utf8.h on perl 5.41+
+          expands UTF8_MAXBYTES_CASE through MAX(), which perl.h reserves
+          for PERL_CORE/PERL_EXT
+        - The stat/fstat call sites now declare struct stat rather than
+          Stat_t. 
+
+0.03    Date/time
+        - Windows fixes 
+        - Path safety now treats '\' as a separator alongside '/' when
+          scanning a template name for traversal.
+        - Perl 5.10.0 is the new minimum, down from 5.16. ppport.h supplies
+          av_top_index, croak_sv, mg_findext, SvREFCNT_dec_NN, HeUTF8 and
+          utf8_to_uvchr_buf; sv_eq_flags/sv_cmp_flags fall back to
+          sv_eq/sv_cmp, which take the identical path for the already
+          fetched non-magical SVs the VM compares. cv_set_call_checker
+          needs 5.14 and cannot be back-ported, so below that the
+          statically-resolved fast path is simply not installed and every
+          call takes the ordinary XSUB 
+        - Fixed a latent stack bug in the ABI self-test: SvIV(POPs) popped
+          twice
+        - t/11-bytecode-shape.t asserted a 1000us compile budget, which is
+          a property of the smoker rather than of the compiler
+
+0.02    Date/time
+        - A shared C ABI (include/st_abi.h), so a consumer XS module can
+          render through the engine without a Perl frame: engine_of hands
+          back the opaque engine behind a blessed Template::Stencil object
+          (building it lazily, as the render method does), and render is
+          the render path minus the XS prologue and the croak. Template
+          errors come back through an out-parameter rather than as an
+          exception, so a consumer can turn one into its own 500. The table
+          is resolved at runtime through Template::Stencil::_abi_ptr and
+          gated on abi_version, so there is no link-time coupling and the
+          two dists upgrade independently; it grows only at the end.
+        - Installed through ExtUtils::Depends, so a dependent reaches
+          st_abi.h without vendoring a copy. t/57-abi.t drives the table
+          the way a consumer does and checks its output byte-for-byte
+          against the render method, UTF-8 flag included.
+
+0.01    Date/time
+        First version, released on an unsuspecting world.
+

@@ -1,0 +1,110 @@
+#!perl
+use 5.010;
+use strict;
+use warnings;
+use Test::More;
+use File::Temp ();
+use Template::Stencil;
+
+# One template exercising every v0.01 feature at once, asserted against
+# a committed golden file. This is the rendered-output spec: any change
+# that alters produced bytes shows up here first. The golden is
+# pretty-formatted (pretty => 1, so Eshu is required to run this file).
+
+# A hard floor: the golden contains a same-line <script> pair, which
+# Eshu 0.10 truncated the document at - an older Eshu fails this file
+# with a byte-perfect render cut off at that line (three identical
+# smoker FAILs on 0.07). 0.13 rather than 0.11 because 0.11 and 0.12
+# do not build or walk correctly on Windows.
+plan skip_all => 'Eshu 0.13+ required for the pretty golden'
+    unless eval { require Eshu; Eshu->VERSION('0.13'); 1 };
+
+my $dir = File::Temp::tempdir(CLEANUP => 1);
+
+sub put {
+    my ($name, $content) = @_;
+    open my $fh, '>', "$dir/$name" or die $!;
+    binmode $fh;
+    print $fh $content;
+    close $fh;
+}
+
+put('wrap.tmpl', <<'W');
+<page title="{% title | default('untitled') %}">
+{% content %}
+</page>
+W
+
+put('side.tmpl', <<'S');
+<side for="{% who.name %}" at="{% loop.index %}/{% outer.index1 %}"></side>
+S
+
+put('sink.tmpl', <<'T');
+{%# every feature in one file %}
+<h1>{% title | trim | upper %}</h1>
+literal brace: {%%}raw%}
+{% if user && user.age >= 18 %}adult {% user.name %}{% elsif user %}minor{% else %}nobody{% end %}
+{% unless missing %}no-missing{% end %}
+{% set greeting = 'hi "' %}{% set who = user %}
+{% for item in items %}
+  {% set outer = loop %}
+  {% for tag in item.tags %}<t o="{% outer.index %}" i="{% loop.index %}" f="{% if loop.first %}y{% else %}n{% end %}" l="{% if loop.last %}y{% else %}n{% end %}" e="{% if loop.even %}e{% else %}o{% end %}">{% tag %}</t>{% end %}
+  {% include side.tmpl %}
+{% end %}
+{% for k, v in map %}[{% loop.key %}={% v | upper %}]{% end %}
+esc: {% evil %} raw: {% raw evil %} html: {% evil | html %} double: {% evil | html | lower %}
+uri: {% link | uri %} default: {% nothing | default('<d>') %}
+money: {% price | money %} chain: {% shout | trim | lower | upper %}
+greeting: {% greeting %} num: {% if n == 2.5 %}two-and-a-half{% end %}
+str: {% if title eq ' The Title ' %}exact{% end %} not: {% if not missing %}absent{% end %}
+paths: {% deep.a[1].b %} undef-quiet: [{% deep.a[5].b %}]
+T
+
+my $s = Template::Stencil->new(
+    template_dir => $dir,
+    wrapper      => 'wrap.tmpl',
+    pretty       => 1,
+    filters      => { money => sub { sprintf '%.2f', $_[0] } },
+);
+
+my %data = (
+    title => ' The Title ',
+    user  => { name => 'Ada <A>', age => 36 },
+    items => [
+        { tags => [qw(x y)] },
+        { tags => [qw(z)] },
+    ],
+    map   => { beta => 'b&b', alpha => 'a' },
+    # all five escapables, in the nastiest element for the pretty pass: a
+    # same-line <script> pair (Eshu 0.11+ handles it inline; 0.10
+    # truncated the document there, which is why this was an <em> once)
+    evil  => q{<script a="1&2">'q'</script>},
+    link  => "a b/c?d=e&f=caf\x{e9}",
+    price => 3.5,
+    shout => '  MiXeD  ',
+    n     => 2.5,
+    deep  => { a => [ {}, { b => 'found' } ] },
+);
+
+my $got = $s->render('sink.tmpl', \%data);
+
+my $golden_file = 't/corpus/kitchen.golden';
+if ($ENV{STENCIL_REGOLD}) {
+    open my $fh, '>', $golden_file or die $!;
+    binmode $fh;
+    print $fh $got;
+    close $fh;
+    diag 'kitchen golden regenerated';
+}
+my $want = do {
+    open my $fh, '<', $golden_file or die "$golden_file: $!";
+    binmode $fh;
+    local $/;
+    <$fh>;
+};
+is($got, $want, 'kitchen sink matches golden');
+
+# Determinism across repeated renders and dispatch/cache paths.
+is($s->render('sink.tmpl', \%data), $got, 'second render identical');
+
+done_testing;
